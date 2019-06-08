@@ -25,7 +25,9 @@ Phase 2: Getting 4-channeled RGBD (RGB + depth) matrix frames.
 	Data was displayed on screen along with color and depth data and there was no difference in this newly created 4-channeled 
 	image andnormal BGR image.
 	
-Phase 3: depth data thresholding
+Phase 3: Background subtraction
 
-	
+	Depth data in 8UC1 format is thresholded in regards to the first (background) image.
+	On RGBD data, the following background subtraction techniques are used: KNN, MOG2.
+
 	
