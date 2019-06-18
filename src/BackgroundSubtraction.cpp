@@ -49,7 +49,7 @@ BackgroundSubtraction::BackgroundSubtraction(BackgroundSubtraction::SubtractorTy
 	}
 }
 
-void BackgroundSubtraction::Apply(cv::Mat& src, cv::Mat& dst)
+void BackgroundSubtraction::apply(cv::Mat& src, cv::Mat& dst)
 {
 	if (DEPTH_THRESHOLD == m_type)
 	{

@@ -24,7 +24,7 @@ public:
 
 	BackgroundSubtraction(BackgroundSubtraction::SubtractorType type, int history, int varThreshold, bool shadows);
 
-	void Apply(cv::Mat& src, cv::Mat &dst);
+	void apply(cv::Mat& src, cv::Mat &dst);
 
 private:
 	bool m_backgroundSet;
