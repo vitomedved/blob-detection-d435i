@@ -8,21 +8,23 @@
 #include "cv-helpers.hpp"
 
 #include "BackgroundSubtraction.hpp"
-#include <atomic>
+#include "CBlobManager.h"
 
 
 const auto PLAYBACK_FILEPATH = "C:/Users/vmedved/Desktop/blob-detection/recording/test.bag";//"../../recording/test.bag";
-const auto RECORDING_FILEPATH = "../../recording/test2.bag";
+const auto RECORDING_FILEPATH = "C:/Users/vmedved/Desktop/blob-detection/recording/test2.bag";//"../../recording/test2.bag";
 
 float CURRENT_SCALE = 3.0;
 
-const auto timeoutThreshold = 20; // seconds of timeThreshold (max recording time)
+const auto timeoutThreshold = 30; // seconds of timeThreshold (max recording time)
 
 bool profile_changed(const std::vector<rs2::stream_profile>& current, const std::vector<rs2::stream_profile>& prev);
 
 rs2_stream find_stream_to_align(const std::vector<rs2::stream_profile>& streams);
 
 float get_depth_scale(rs2::device dev);
+
+std::vector<cv::KeyPoint> getKeypointsOfCurrentFrame(cv::Mat& frame, cv::Ptr<cv::SimpleBlobDetector>& blobDetector);
 
 int thr = 25;
 
@@ -73,12 +75,15 @@ int main(int argc, char* argv[]) try
 
 	// rs2::config which is used to choose between recording/playbacking or just a normal live stream
 	rs2::config cfg; // Declare a new configuration
-	
+
 	//cfg.enable_record_to_file(RECORDING_FILEPATH);
 	cfg.enable_device_from_file(PLAYBACK_FILEPATH);
+	//cfg.enable_all_streams();
 
 	rs2::pipeline_profile profile = pipe->start(cfg);
 	rs2::device device = pipe->get_active_profile().get_device();
+
+	//device.as<rs2::recorder>().pause();
 
 	rs2_stream align_to = find_stream_to_align(profile.get_streams());
 	rs2::align align(align_to);
@@ -99,297 +104,506 @@ int main(int argc, char* argv[]) try
 	//auto MOG2 = cv::createBackgroundSubtractorMOG2(500, 16.0, false);
 
 
-	// Currently, recording mode will record timeoutThrashold seconds to a .bag file
-	// TODO: while time not passed threshold(get frames -> check for blobs -> resume/pause recording)
-	if (device.as<rs2::recorder>())
+	cv::SimpleBlobDetector::Params params;
+	params.filterByArea = true;
+	params.minArea = 1000;
+	params.maxArea = 20000;
+	params.filterByCircularity = false;
+	params.filterByColor = true;
+	params.blobColor = 255;
+	params.filterByConvexity = false;
+	params.filterByInertia = false;
+
+
+	cv::Ptr<cv::SimpleBlobDetector> blobDetectorForRecording = cv::SimpleBlobDetector::create(params);
+
+	cv::SimpleBlobDetector::Params params2;
+	params2.filterByArea = true;
+	params2.minArea = 20000;
+	params2.maxArea = 900000;
+	params2.filterByCircularity = false;
+	params2.filterByColor = true;
+	params2.blobColor = 255;
+	params2.filterByConvexity = false;
+	params2.filterByInertia = false;
+
+	cv::Ptr<cv::SimpleBlobDetector> blobDetectorForPostProcessing = cv::SimpleBlobDetector::create(params2);
+
+	cv::Ptr<cv::BackgroundSubtractor> knn = cv::createBackgroundSubtractorKNN(200, 700, false);
+
+	cv::KalmanFilter KF(4, 2, 0);
+	cv::Mat state = cv::Mat::zeros(4, 2, CV_32F);
+	// TODO: maybe 2, 2, CV_32F
+	cv::Mat measurement = cv::Mat::zeros(2, 1, CV_32F);
+
+	float transitionData[16] = {	1, 0, 1, 0,
+									0, 1, 0, 1,
+									0, 0, 1, 0,
+									0, 0, 0, 1 };
+
+	KF.transitionMatrix = cv::Mat(4, 4, CV_32F, transitionData);
+	cv::setIdentity(KF.measurementMatrix);
+	cv::setIdentity(KF.processNoiseCov, cv::Scalar::all(1e-4));
+	cv::setIdentity(KF.measurementNoiseCov, cv::Scalar::all(10));
+	cv::setIdentity(KF.errorCovPost, cv::Scalar::all(.1));
+
+	std::vector<cv::Point> realPosition, kalmanPosition;
+
+	bool doesBlobNeedNewKalman = true;
+
+	BlobManager blobManager;
+
+	while(true)
 	{
-		while (true)
+		// Currently, recording mode will record timeoutThrashold seconds to a .bag file
+		// TODO: while time not passed threshold(get frames -> check for blobs -> resume/pause recording)
+		if (device.as<rs2::recorder>())
 		{
 			end = std::chrono::system_clock::now();
 			auto seconds = std::chrono::duration_cast<std::chrono::seconds>(end - start);
 			if (seconds.count() > timeoutThreshold) {
 				pipe->stop();
-				break;
+				pipe = std::make_shared<rs2::pipeline>();
+				std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
+				rs2::config newCfg;
+				std::string timestamp_string = std::to_string(ms.count());
+				newCfg.enable_record_to_file("C:/Users/vmedved/Desktop/blob-detection/recording/recording_" + timestamp_string + ".bag");
+				pipe->start(newCfg);
+				device = pipe->get_active_profile().get_device();
+				start = std::chrono::system_clock::now();
 			}
 
+
 			frames = pipe->wait_for_frames();
-
-			depth = frames.get_depth_frame().apply_filter(color_map);
-			const int depth_w = depth.as<rs2::video_frame>().get_width();
-			const int depth_h = depth.as<rs2::video_frame>().get_height();
-
-			color = frames.get_color_frame();
-			const int color_w = color.as<rs2::video_frame>().get_width();
-			const int color_h = color.as<rs2::video_frame>().get_height();
-
-			// Create OpenCV matrix of size (w,h) from the colorized depth data
-			cv::Mat depthIimage(cv::Size(depth_w, depth_h), CV_8UC3, (void*)depth.get_data(), cv::Mat::AUTO_STEP);
-			cv::Mat colorImage(cv::Size(color_w, color_h), CV_8UC3, (void*)color.get_data(), cv::Mat::AUTO_STEP);
-
-			auto now = std::chrono::system_clock::now();
-			std::time_t end_time = std::chrono::system_clock::to_time_t(now);
-
-			cv::imshow("Depth data recording", depthIimage);
-			cv::imshow("Color data recording", colorImage);
-			cv::waitKey(1);
-		}
-	}
-	else if (device.as<rs2::playback>())
-	{
-		cv::SimpleBlobDetector::Params params;
-		params.filterByArea = true;
-		params.minArea = 1000;
-		params.maxArea = 20000;
-		params.filterByCircularity = false;
-		params.filterByColor = true;
-		params.blobColor = 255;
-		params.filterByConvexity = false;
-		params.filterByInertia = false;
-
-
-		cv::Ptr<cv::SimpleBlobDetector> blobDetector = cv::SimpleBlobDetector::create(params);
-
-		cv::Ptr<cv::BackgroundSubtractor> knn = cv::createBackgroundSubtractorKNN(500, 400, false);
-
-		while (true)
-		{
-			frames = pipe->wait_for_frames();
-			if (!doesFrameContainHuman(frames, knn, blobDetector))
+			if (!doesFrameContainHuman(frames, knn, blobDetectorForRecording))
 			{
-				/// TODO: ONLY ONE OF BELOW CFG'S CAN BE SET DEPENDING ON OUR CASE (MOVE TO FUNCTION I GUESS)
-				pipe->stop();
+				/*pipe->stop();
 				pipe = std::make_shared<rs2::pipeline>();
 				rs2::config newCfg;
-				// ----------------------------------------- CHANGES FROM CURRENT STREAM TO DEFAULT STREAM -----------------------------------------
 				newCfg.enable_all_streams();
-				// ----------------------------------------- CHANGES FROM CURRENT STREAM TO RECORDING STREAM -----------------------------------------
-				newCfg.enable_record_to_file("path/to/file.bag");
-				// ----------------------------------------- CHANGES FROM CURRENT STREAM TO PLAYBACK STREAM -----------------------------------------
-				newCfg.enable_device_from_file("path/to/file.bag");
-
-				// Start pipeline
-				pipe->start();
-				device = pipe->get_active_profile().get_device();
+				pipe->start(newCfg);
+				device = pipe->get_active_profile().get_device();*/
+				device.as<rs2::recorder>().pause();
 			}
+			else
+			{
+				device.as<rs2::recorder>().resume();
+			}
+
+			/*while (true)
+			{
+				end = std::chrono::system_clock::now();
+				auto seconds = std::chrono::duration_cast<std::chrono::seconds>(end - start);
+				if (seconds.count() > timeoutThreshold) {
+					pipe->stop();
+					break;
+				}
+
+				frames = pipe->wait_for_frames();
+
+				depth = frames.get_depth_frame().apply_filter(color_map);
+				const int depth_w = depth.as<rs2::video_frame>().get_width();
+				const int depth_h = depth.as<rs2::video_frame>().get_height();
+
+				color = frames.get_color_frame();
+				const int color_w = color.as<rs2::video_frame>().get_width();
+				const int color_h = color.as<rs2::video_frame>().get_height();
+
+				// Create OpenCV matrix of size (w,h) from the colorized depth data
+				cv::Mat depthIimage(cv::Size(depth_w, depth_h), CV_8UC3, (void*)depth.get_data(), cv::Mat::AUTO_STEP);
+				cv::Mat colorImage(cv::Size(color_w, color_h), CV_8UC3, (void*)color.get_data(), cv::Mat::AUTO_STEP);
+
+				auto now = std::chrono::system_clock::now();
+				std::time_t end_time = std::chrono::system_clock::to_time_t(now);
+
+				cv::imshow("Depth data recording", depthIimage);
+				cv::imshow("Color data recording", colorImage);
+				cv::waitKey(1);
+
+			}*/
 		}
+		else if (device.as<rs2::playback>())
+		{
+			rs2::frameset frameset = pipe->wait_for_frames();
 
-		/*
-		std::queue<QueuedMat> depthQueue;
-		std::queue<QueuedMat> KNNQueue;
-		std::queue<QueuedMat> MOG2Queue;
-
-		std::atomic<bool> isDepthMatCreated = false;
-		cv::Mat depthDequeuedMat;
-
-		std::atomic<bool> isColorMatCreated = false;
-		cv::Mat knnDequeuedMat;
-		cv::Mat mog2DequeuedMat;
-
-		const int MAX_FRAMES_IN_Q = 2;
-
-		std::thread processingThread([&]() {
-			while (true)
+			if (profile_changed(pipe->get_active_profile().get_streams(), profile.get_streams()))
 			{
-				rs2::frameset frameset = pipe->wait_for_frames();
+				//If the profile was changed, update the align object, and also get the new device's depth scale
+				profile = pipe->get_active_profile();
+				align_to = find_stream_to_align(profile.get_streams());
+				align = rs2::align(align_to);
+				depth_scale = get_depth_scale(profile.get_device());
+			}
 
-				if (profile_changed(pipe->get_active_profile().get_streams(), profile.get_streams()))
-				{
-					//If the profile was changed, update the align object, and also get the new device's depth scale
-					profile = pipe->get_active_profile();
-					align_to = find_stream_to_align(profile.get_streams());
-					align = rs2::align(align_to);
-					depth_scale = get_depth_scale(profile.get_device());
-				}
+			rs2::frameset alignedFrameset = align.process(frameset);
 
-				rs2::frameset alignedFrameset = align.process(frameset);
+			// Trying to get both other and aligned depth frames
+			rs2::video_frame colorFrame = alignedFrameset.first(align_to);
+			rs2::depth_frame depthFrame = alignedFrameset.get_depth_frame();
 
-				// Trying to get both other and aligned depth frames
-				rs2::video_frame colorFrame = alignedFrameset.first(align_to);
-				rs2::depth_frame depthFrame = alignedFrameset.get_depth_frame();
+			if (!depthFrame || !colorFrame)
+			{
+				continue;
+			}
 
-				if (!depthFrame || !colorFrame)
-				{
-					continue;
-				}
+			const int depth_w = depthFrame.get_width();
+			const int depth_h = depthFrame.get_height();
 
-				const int depth_w = depthFrame.get_width();
-				const int depth_h = depthFrame.get_height();
+			const int color_w = colorFrame.get_width();
+			const int color_h = colorFrame.get_height();
 
-				if (!isDepthMatCreated)
-				{
-					depthDequeuedMat = cv::Mat(depth_h, depth_w, CV_8UC1);
-					isDepthMatCreated = true;
-				}
 
-				const int color_w = colorFrame.get_width();
-				const int color_h = colorFrame.get_height();
-
-				if (!isColorMatCreated)
-				{
-					knnDequeuedMat = cv::Mat(color_h, color_w, CV_8UC1);
-					mog2DequeuedMat = cv::Mat(color_h, color_w, CV_8UC1);
-					isColorMatCreated = true;
-				}
-
-				// -------------------------------------- Getting DEPTH data --------------------------------------
-
+			// --------------------------------------Getting DEPTH data--------------------------------------
 				cv::Mat depthData = depth_frame_to_meters(*pipe, depthFrame);
-				// convert to 8 bit with scale factor 255./3 because 3m is clipping distance and there are 255 values
-				depthData.convertTo(depthData, CV_8UC1, 255. / CURRENT_SCALE);
+			// convert to 8 bit with scale factor 255./3 because 3m is clipping distance and there are 255 values
+			depthData.convertTo(depthData, CV_8UC1, 255. / CURRENT_SCALE);
 
-				cv::Mat thresholdedDepth;
-				depthSubtraction.setDepthThreshold(thr);
-				depthSubtraction.apply(depthData, thresholdedDepth);
-				//cv::imshow("Thresholded", thresholdedDepth);
+			cv::Mat thresholdedDepth;
+			depthSubtraction.setDepthThreshold(thr);
+			depthSubtraction.apply(depthData, thresholdedDepth);
+			// -------------------------------------- Getting RGBD data --------------------------------------
 
-				QueuedMat depthMat;
-				thresholdedDepth.copyTo(depthMat.img);
-				thresholdedDepth.release();
-				depthQueue.push(depthMat);
+			cv::Mat colorData(cv::Size(color_w, color_h), CV_8UC3, (void*)colorFrame.get_data(), cv::Mat::AUTO_STEP);
+			cv::cvtColor(colorData, colorData, cv::COLOR_RGB2BGR);
 
-				// -------------------------------------- Getting RGBD data --------------------------------------
+			// split color image (rgb channels) to seperate b, g, r
+			std::vector<cv::Mat> rgbdSrc;
+			cv::split(colorData, rgbdSrc);
+			colorData.release();
 
-				cv::Mat colorData(cv::Size(color_w, color_h), CV_8UC3, (void*)colorFrame.get_data(), cv::Mat::AUTO_STEP);
-				cv::cvtColor(colorData, colorData, cv::COLOR_RGB2BGR);
+			// add 4th, depth, channel to bgr
+			rgbdSrc.push_back(thresholdedDepth);
 
-				// split color image (rgb channels) to seperate b, g, r
-				std::vector<cv::Mat> rgbdSrc;
-				cv::split(colorData, rgbdSrc);
-				colorData.release();
+			// merge all channels together (r + b + g + depth)
+			cv::Mat rgbdData;
+			cv::merge(rgbdSrc, rgbdData);
 
-				// add 4th, depth, channel to bgr
-				rgbdSrc.push_back(depthData);
+			rgbdSrc.clear();
 
-				// merge all channels together (r + b + g + depth)
-				cv::Mat rgbdData;
-				cv::merge(rgbdSrc, rgbdData);
-
-
-				// --------------------------------- Do some filter processing on color images -----------------------------------------------
-
-				// KNN
-				cv::Mat knnResult;
-
-				knnSub.apply(rgbdData, knnResult);
-
-				knnResult.convertTo(knnResult, CV_8UC1);
-
-				QueuedMat knnMat;
-				knnResult.copyTo(knnMat.img);
-				knnResult.release();
-				KNNQueue.push(knnMat);
-
-				// MOG2
-				cv::Mat mog2Result;
-
-				mog2Sub.apply(rgbdData, mog2Result);
-
-				mog2Result.convertTo(mog2Result, CV_8UC1);
-
-				QueuedMat mog2Mat;
-				mog2Result.copyTo(mog2Mat.img);
-				mog2Result.release();
-				MOG2Queue.push(mog2Mat);
-
-				// -------------------------------------- Release data --------------------------------------
-				depthData.release();
-				rgbdData.release();
-				
-
-				while (depthQueue.size() > MAX_FRAMES_IN_Q ||
-						KNNQueue.size() > MAX_FRAMES_IN_Q ||
-						MOG2Queue.size() > MAX_FRAMES_IN_Q)
-				{
-					if (depthQueue.size() > MAX_FRAMES_IN_Q)
-					{
-						depthQueue.pop();
-					}
-					if (KNNQueue.size() > MAX_FRAMES_IN_Q)
-					{
-						KNNQueue.pop();
-					}
-					if (MOG2Queue.size() > MAX_FRAMES_IN_Q)
-					{
-						MOG2Queue.pop();
-					}
-				}
-
-			}
-		});
+			int SCALE_FACTOR = 6;
+			cv::resize(rgbdData, rgbdData, cv::Size(color_w / SCALE_FACTOR, depth_w / SCALE_FACTOR));
+			cv::resize(thresholdedDepth, thresholdedDepth, cv::Size(color_w / SCALE_FACTOR, depth_w / SCALE_FACTOR));
 			
-		// Main thread
-		while (true) {
-			while (!depthQueue.empty()) 
+			// KNN
+			cv::Mat knnResult;
+
+			knnSub.apply(rgbdData, knnResult);
+
+			knnResult.convertTo(knnResult, CV_8UC1);
+
+			//cv::resize(knnResult, knnResult, cv::Size(color_w, depth_w));
+
+			// MOG2
+			cv::Mat mog2Result;
+
+			mog2Sub.apply(rgbdData, mog2Result);
+
+			mog2Result.convertTo(mog2Result, CV_8UC1);
+
+			//cv::resize(mog2Result, mog2Result, cv::Size(color_w, depth_w));
+
+			// spaja 3 maske
+			cv::addWeighted(thresholdedDepth, 0.7, knnResult, 0.3, 0.0, thresholdedDepth);
+			cv::addWeighted(thresholdedDepth, 0.77, mog2Result, 0.33, 0.0, thresholdedDepth);
+
+			//cv::resize(thresholdedDepth, thresholdedDepth, cv::Size(1280, 720));
+
+			cv::threshold(thresholdedDepth, thresholdedDepth, 185, 255, cv::THRESH_BINARY);
+
+			cv::resize(thresholdedDepth, thresholdedDepth, cv::Size(1280, 720));
+			cv::cvtColor(thresholdedDepth, thresholdedDepth, cv::COLOR_GRAY2BGR);
+
+			cv::Mat prediction = KF.predict();
+			cv::Point predictedPoint(prediction.at<float>(0), prediction.at<float>(1));
+
+			auto keypoints = getKeypointsOfCurrentFrame(thresholdedDepth, blobDetectorForPostProcessing);
+			
+			cv::Mat estimated;
+
+			if (keypoints.size() < 1)
 			{
-				if (!isDepthMatCreated)
+				//doesBlobNeedNewKalman = true;
+
+				blobManager.noBlobsDetected();
+				
+			}
+			else if (keypoints.size() > 0)
+			{
+				/*
+				cv::KeyPoint currentBlob = keypoints[0];
+				measurement.at<float>(0) = currentBlob.pt.x;
+				measurement.at<float>(1) = currentBlob.pt.y;
+
+				if (doesBlobNeedNewKalman)
 				{
-					continue;
+					KF.statePre.at<float>(0) = currentBlob.pt.x;
+					KF.statePre.at<float>(1) = currentBlob.pt.y;
+
+					doesBlobNeedNewKalman = false;
 				}
 
-				depthQueue.front().img.copyTo(depthDequeuedMat);
-				depthQueue.pop();
+				estimated = KF.correct(measurement);
 
-				//cv::imshow("depthThresh", depthDequeuedMat);
-				//cv::waitKey(1);
+				cv::drawKeypoints(thresholdedDepth, keypoints, thresholdedDepth, cv::Scalar(255, 0, 255), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
+				*/
+				cv::drawKeypoints(thresholdedDepth, keypoints, thresholdedDepth, cv::Scalar(255, 0, 255), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
+				blobManager.matchBlobs(keypoints, thresholdedDepth);
 			}
 
-			while (!KNNQueue.empty())
+			if (!estimated.empty())
 			{
-				if (!isColorMatCreated)
-				{
-					continue;
-				}
-
-				KNNQueue.front().img.copyTo(knnDequeuedMat);
-				KNNQueue.pop();
-
-				//cv::imshow("KNN color", knnDequeuedMat);
-				//cv::waitKey(1);
+				cv::circle(thresholdedDepth, cv::Point(estimated.at<float>(0), estimated.at<float>(1)), 5, cv::Scalar(255, 255, 0), 20);
 			}
-
-			while (!MOG2Queue.empty())
-			{
-				if (!isColorMatCreated)
-				{
-					continue;
-				}
-
-				MOG2Queue.front().img.copyTo(mog2DequeuedMat);
-				MOG2Queue.pop();
-
-				//cv::imshow("MOG2 color", mog2DequeuedMat);
-				//cv::waitKey(1);
-			}
-
-			if (depthDequeuedMat.empty() || knnDequeuedMat.empty() || mog2DequeuedMat.empty())
-			{
-				continue;
-			}
-
-			// If i'm here I should have at least 1 frame of each mask.
-			if (depthDequeuedMat.size() != knnDequeuedMat.size() || depthDequeuedMat.channels() != knnDequeuedMat.channels())
-			{
-				continue;
-			}
-			//cv::add(depthDequeuedMat, knnDequeuedMat, result);
-			cv::addWeighted(depthDequeuedMat, 0.5, knnDequeuedMat, 0.5, 0.0, depthDequeuedMat);
-			if (depthDequeuedMat.size() != mog2DequeuedMat.size() || depthDequeuedMat.channels() != mog2DequeuedMat.channels())
-			{
-				continue;
-			}
-			//cv::add(result, mog2DequeuedMat, result);
-			cv::addWeighted(depthDequeuedMat, 0.5, mog2DequeuedMat, 0.5, 0.0, depthDequeuedMat);
-
-			//cv::threshold(depthDequeuedMat, depthDequeuedMat, 750, 765, cv::THRESH_TOZERO);
-
-			cv::imshow("Masked 3 times", depthDequeuedMat);
+			
+			cv::imshow("Masked 3 times", thresholdedDepth);
 			cv::waitKey(1);
 
+			depthData.release();
+			thresholdedDepth.release();
+			rgbdData.release();
+			knnResult.release();
+			mog2Result.release();
 		}
-		processingThread.detach();
+		/*
+		else if (device.as<rs2::playback>())
+		{
+			std::queue<QueuedMat> depthQueue;
+			std::queue<QueuedMat> KNNQueue;
+			std::queue<QueuedMat> MOG2Queue;
+
+			std::atomic<bool> isDepthMatCreated = false;
+			cv::Mat depthDequeuedMat;
+
+			std::atomic<bool> isColorMatCreated = false;
+			cv::Mat knnDequeuedMat;
+			cv::Mat mog2DequeuedMat;
+
+			const int MAX_FRAMES_IN_Q = 2;
+
+			std::thread processingThread([&]() {
+				while (true)
+				{
+					rs2::frameset frameset = pipe->wait_for_frames();
+
+					if (profile_changed(pipe->get_active_profile().get_streams(), profile.get_streams()))
+					{
+						//If the profile was changed, update the align object, and also get the new device's depth scale
+						profile = pipe->get_active_profile();
+						align_to = find_stream_to_align(profile.get_streams());
+						align = rs2::align(align_to);
+						depth_scale = get_depth_scale(profile.get_device());
+					}
+
+					rs2::frameset alignedFrameset = align.process(frameset);
+
+					// Trying to get both other and aligned depth frames
+					rs2::video_frame colorFrame = alignedFrameset.first(align_to);
+					rs2::depth_frame depthFrame = alignedFrameset.get_depth_frame();
+
+					if (!depthFrame || !colorFrame)
+					{
+						continue;
+					}
+
+					const int depth_w = depthFrame.get_width();
+					const int depth_h = depthFrame.get_height();
+
+					if (!isDepthMatCreated)
+					{
+						depthDequeuedMat = cv::Mat(depth_h, depth_w, CV_8UC1);
+						isDepthMatCreated = true;
+					}
+
+					const int color_w = colorFrame.get_width();
+					const int color_h = colorFrame.get_height();
+
+					if (!isColorMatCreated)
+					{
+						knnDequeuedMat = cv::Mat(color_h, color_w, CV_8UC1);
+						mog2DequeuedMat = cv::Mat(color_h, color_w, CV_8UC1);
+						isColorMatCreated = true;
+					}
+
+					// -------------------------------------- Getting DEPTH data --------------------------------------
+
+					cv::Mat depthData = depth_frame_to_meters(*pipe, depthFrame);
+					// convert to 8 bit with scale factor 255./3 because 3m is clipping distance and there are 255 values
+					depthData.convertTo(depthData, CV_8UC1, 255. / CURRENT_SCALE);
+
+					cv::Mat thresholdedDepth;
+					depthSubtraction.setDepthThreshold(thr);
+					depthSubtraction.apply(depthData, thresholdedDepth);
+					//cv::imshow("Thresholded", thresholdedDepth);
+
+					QueuedMat depthMat;
+					thresholdedDepth.copyTo(depthMat.img);
+					thresholdedDepth.release();
+					depthQueue.push(depthMat);
+
+					// -------------------------------------- Getting RGBD data --------------------------------------
+
+					cv::Mat colorData(cv::Size(color_w, color_h), CV_8UC3, (void*)colorFrame.get_data(), cv::Mat::AUTO_STEP);
+					cv::cvtColor(colorData, colorData, cv::COLOR_RGB2BGR);
+
+					// split color image (rgb channels) to seperate b, g, r
+					std::vector<cv::Mat> rgbdSrc;
+					cv::split(colorData, rgbdSrc);
+					colorData.release();
+
+					// add 4th, depth, channel to bgr
+					rgbdSrc.push_back(depthData);
+
+					// merge all channels together (r + b + g + depth)
+					cv::Mat rgbdData;
+					cv::merge(rgbdSrc, rgbdData);
+
+
+					// --------------------------------- Do some filter processing on color images -----------------------------------------------
+
+					cv::resize(colorData, colorData, cv::Size(color_w / 4, depth_w / 4));
+
+					// KNN
+					cv::Mat knnResult;
+
+					knnSub.apply(rgbdData, knnResult);
+
+					knnResult.convertTo(knnResult, CV_8UC1);
+					cv::resize(knnResult, knnResult, cv::Size(color_w, depth_w));
+
+					QueuedMat knnMat;
+					knnResult.copyTo(knnMat.img);
+					knnResult.release();
+					KNNQueue.push(knnMat);
+
+					// MOG2
+					cv::Mat mog2Result;
+
+					mog2Sub.apply(rgbdData, mog2Result);
+
+					mog2Result.convertTo(mog2Result, CV_8UC1);
+					cv::resize(mog2Result, mog2Result, cv::Size(color_w, depth_w));
+
+					QueuedMat mog2Mat;
+					mog2Result.copyTo(mog2Mat.img);
+					mog2Result.release();
+					MOG2Queue.push(mog2Mat);
+
+					// -------------------------------------- Release data --------------------------------------
+					depthData.release();
+					rgbdData.release();
+
+
+					while (depthQueue.size() > MAX_FRAMES_IN_Q ||
+							KNNQueue.size() > MAX_FRAMES_IN_Q ||
+							MOG2Queue.size() > MAX_FRAMES_IN_Q)
+					{
+						if (depthQueue.size() > MAX_FRAMES_IN_Q)
+						{
+							depthQueue.pop();
+						}
+						if (KNNQueue.size() > MAX_FRAMES_IN_Q)
+						{
+							KNNQueue.pop();
+						}
+						if (MOG2Queue.size() > MAX_FRAMES_IN_Q)
+						{
+							MOG2Queue.pop();
+						}
+					}
+
+				}
+			});
+
+			// Main thread
+			while (true) {
+				while (!depthQueue.empty())
+				{
+					if (!isDepthMatCreated)
+					{
+						continue;
+					}
+
+					depthQueue.front().img.copyTo(depthDequeuedMat);
+					depthQueue.pop();
+
+					//cv::imshow("depthThresh", depthDequeuedMat);
+					//cv::waitKey(1);
+				}
+
+				while (!KNNQueue.empty())
+				{
+					if (!isColorMatCreated)
+					{
+						continue;
+					}
+
+					KNNQueue.front().img.copyTo(knnDequeuedMat);
+					KNNQueue.pop();
+
+					//cv::imshow("KNN color", knnDequeuedMat);
+					//cv::waitKey(1);
+				}
+
+				while (!MOG2Queue.empty())
+				{
+					if (!isColorMatCreated)
+					{
+						continue;
+					}
+
+					MOG2Queue.front().img.copyTo(mog2DequeuedMat);
+					MOG2Queue.pop();
+
+					//cv::imshow("MOG2 color", mog2DequeuedMat);
+					//cv::waitKey(1);
+				}
+
+				if (depthDequeuedMat.empty() || knnDequeuedMat.empty() || mog2DequeuedMat.empty())
+				{
+					continue;
+				}
+
+				// If i'm here I should have at least 1 frame of each mask.
+				if (depthDequeuedMat.size() != knnDequeuedMat.size() || depthDequeuedMat.channels() != knnDequeuedMat.channels())
+				{
+					continue;
+				}
+				//cv::add(depthDequeuedMat, knnDequeuedMat, result);
+				cv::addWeighted(depthDequeuedMat, 0.5, knnDequeuedMat, 0.5, 0.0, depthDequeuedMat);
+				if (depthDequeuedMat.size() != mog2DequeuedMat.size() || depthDequeuedMat.channels() != mog2DequeuedMat.channels())
+				{
+					continue;
+				}
+				//cv::add(result, mog2DequeuedMat, result);
+				cv::addWeighted(depthDequeuedMat, 0.5, mog2DequeuedMat, 0.5, 0.0, depthDequeuedMat);
+
+				//cv::threshold(depthDequeuedMat, depthDequeuedMat, 750, 765, cv::THRESH_TOZERO);
+
+				cv::imshow("Masked 3 times", depthDequeuedMat);
+				cv::waitKey(1);
+
+			}
+			processingThread.detach();
+			
+		}
 		*/
+		else
+		{
+			frames = pipe->wait_for_frames();
+			if (doesFrameContainHuman(frames, knn, blobDetectorForRecording))
+			{
+				device.as<rs2::recorder>().resume();
+				/*pipe->stop();
+				pipe = std::make_shared<rs2::pipeline>();
+				std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
+				rs2::config newCfg;
+				std::string timestamp_string = std::to_string(ms.count());
+				newCfg.enable_record_to_file("C:/Users/vmedved/Desktop/blob-detection/recording/recording_" + timestamp_string);
+				pipe->start(newCfg);
+				device = pipe->get_active_profile().get_device();*/
+			}
+		}
 	}
-	
 
 	pipe->stop();
 
@@ -496,10 +710,20 @@ bool doesFrameContainHuman(rs2::frameset& frameset, cv::Ptr<cv::BackgroundSubtra
 
 	cv::drawKeypoints(colorImage, keypoints, colorImage, cv::Scalar(255, 0, 255), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
 
+	cv::resize(colorImage, colorImage, cv::Size(color_w, color_h));
 	// TODO: remove imShow and waitKey for release, it's only here to see when camera is recording
 	cv::imshow("Color data recording", colorImage);
 	cv::waitKey(1);
 
 	return keypoints.size() > 0;
+}
+
+std::vector<cv::KeyPoint> getKeypointsOfCurrentFrame(cv::Mat &frame, cv::Ptr<cv::SimpleBlobDetector>& blobDetector)
+{
+	std::vector<cv::KeyPoint> ret;
+
+	blobDetector->detect(frame, ret);
+
+	return ret;
 }
 
