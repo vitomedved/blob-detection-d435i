@@ -53,6 +53,14 @@ public:
 
 bool doesFrameContainHuman(rs2::frameset& frameset, cv::Ptr<cv::BackgroundSubtractor> &bgSub, cv::Ptr<cv::SimpleBlobDetector> &blobDetector);
 
+static double distanceBtwPoints(const cv::Point2f& a, const cv::Point2f& b)
+{
+	double xDiff = a.x - b.x;
+	double yDiff = a.y - b.y;
+
+	return std::sqrt((xDiff * xDiff) + (yDiff * yDiff));
+}
+
 int main(int argc, char* argv[]) try
 {
 	// ----------------------- OPENCV ---------------------------------
@@ -119,7 +127,7 @@ int main(int argc, char* argv[]) try
 
 	cv::SimpleBlobDetector::Params params2;
 	params2.filterByArea = true;
-	params2.minArea = 20000;
+	params2.minArea = 10000;
 	params2.maxArea = 900000;
 	params2.filterByCircularity = false;
 	params2.filterByColor = true;
@@ -130,22 +138,6 @@ int main(int argc, char* argv[]) try
 	cv::Ptr<cv::SimpleBlobDetector> blobDetectorForPostProcessing = cv::SimpleBlobDetector::create(params2);
 
 	cv::Ptr<cv::BackgroundSubtractor> knn = cv::createBackgroundSubtractorKNN(200, 700, false);
-
-	cv::KalmanFilter KF(4, 2, 0);
-	cv::Mat state = cv::Mat::zeros(4, 2, CV_32F);
-	// TODO: maybe 2, 2, CV_32F
-	cv::Mat measurement = cv::Mat::zeros(2, 1, CV_32F);
-
-	float transitionData[16] = {	1, 0, 1, 0,
-									0, 1, 0, 1,
-									0, 0, 1, 0,
-									0, 0, 0, 1 };
-
-	KF.transitionMatrix = cv::Mat(4, 4, CV_32F, transitionData);
-	cv::setIdentity(KF.measurementMatrix);
-	cv::setIdentity(KF.processNoiseCov, cv::Scalar::all(1e-4));
-	cv::setIdentity(KF.measurementNoiseCov, cv::Scalar::all(10));
-	cv::setIdentity(KF.errorCovPost, cv::Scalar::all(.1));
 
 	std::vector<cv::Point> realPosition, kalmanPosition;
 
@@ -311,50 +303,24 @@ int main(int argc, char* argv[]) try
 			cv::threshold(thresholdedDepth, thresholdedDepth, 185, 255, cv::THRESH_BINARY);
 
 			cv::resize(thresholdedDepth, thresholdedDepth, cv::Size(1280, 720));
+
 			cv::cvtColor(thresholdedDepth, thresholdedDepth, cv::COLOR_GRAY2BGR);
 
-			cv::Mat prediction = KF.predict();
-			cv::Point predictedPoint(prediction.at<float>(0), prediction.at<float>(1));
-
 			auto keypoints = getKeypointsOfCurrentFrame(thresholdedDepth, blobDetectorForPostProcessing);
-			
-			cv::Mat estimated;
 
 			if (keypoints.size() < 1)
 			{
-				//doesBlobNeedNewKalman = true;
-
 				blobManager.noBlobsDetected();
-				
 			}
 			else if (keypoints.size() > 0)
 			{
-				/*
-				cv::KeyPoint currentBlob = keypoints[0];
-				measurement.at<float>(0) = currentBlob.pt.x;
-				measurement.at<float>(1) = currentBlob.pt.y;
-
-				if (doesBlobNeedNewKalman)
-				{
-					KF.statePre.at<float>(0) = currentBlob.pt.x;
-					KF.statePre.at<float>(1) = currentBlob.pt.y;
-
-					doesBlobNeedNewKalman = false;
-				}
-
-				estimated = KF.correct(measurement);
-
+				auto CURRENT_FILENAME = "this/is/fake/path/to.bag";
 				cv::drawKeypoints(thresholdedDepth, keypoints, thresholdedDepth, cv::Scalar(255, 0, 255), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
-				*/
-				cv::drawKeypoints(thresholdedDepth, keypoints, thresholdedDepth, cv::Scalar(255, 0, 255), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
-				blobManager.matchBlobs(keypoints, thresholdedDepth);
+				blobManager.matchBlobs(keypoints, thresholdedDepth, device.as<rs2::playback>().get_position(), CURRENT_FILENAME);
 			}
+			// Draw all currently tracked blobs paths
+			blobManager.drawBlobPaths(thresholdedDepth);
 
-			if (!estimated.empty())
-			{
-				cv::circle(thresholdedDepth, cv::Point(estimated.at<float>(0), estimated.at<float>(1)), 5, cv::Scalar(255, 255, 0), 20);
-			}
-			
 			cv::imshow("Masked 3 times", thresholdedDepth);
 			cv::waitKey(1);
 
@@ -593,14 +559,6 @@ int main(int argc, char* argv[]) try
 			if (doesFrameContainHuman(frames, knn, blobDetectorForRecording))
 			{
 				device.as<rs2::recorder>().resume();
-				/*pipe->stop();
-				pipe = std::make_shared<rs2::pipeline>();
-				std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
-				rs2::config newCfg;
-				std::string timestamp_string = std::to_string(ms.count());
-				newCfg.enable_record_to_file("C:/Users/vmedved/Desktop/blob-detection/recording/recording_" + timestamp_string);
-				pipe->start(newCfg);
-				device = pipe->get_active_profile().get_device();*/
 			}
 		}
 	}

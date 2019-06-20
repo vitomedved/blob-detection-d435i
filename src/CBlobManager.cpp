@@ -8,11 +8,11 @@ BlobManager::BlobManager():
 
 }
 
-void BlobManager::registerNewBlobs(std::vector<cv::KeyPoint> blobKeypoints)
+void BlobManager::registerNewBlobs(std::vector<cv::KeyPoint> blobKeypoints, uint64_t currentFrameTime, std::string currentFilename)
 {
 	for (auto blobKeypoint : blobKeypoints)
 	{
-		Blob blob(m_currentBlobId++, blobKeypoint.pt);
+		Blob blob(m_currentBlobId++, blobKeypoint.pt, currentFrameTime, currentFilename);
 		m_currentlyTrackedBlobs.push_back(blob);
 	}
 }
@@ -27,11 +27,11 @@ void BlobManager::registerNewBlobs(std::vector<cv::KeyPoint> blobKeypoints)
 //		Also check if there are no blob pairs assigned and there are currently new blobs left with no pair -> add them to currently tracked blobs
 //		ALSO if there are blob pairs assigned, mark row and column of those blobs and "match them" (update current blobs path)
 
-void BlobManager::matchBlobs(std::vector<cv::KeyPoint> blobKeypoints, cv::Mat &paintMeLikeOneOfYourFrenchGirlsFrame)
+void BlobManager::matchBlobs(std::vector<cv::KeyPoint> blobKeypoints, cv::Mat &paintMeLikeOneOfYourFrenchGirlsFrame, uint64_t currentFrameTime, std::string currentFilename)
 {
 
-	size_t numberOfNewBlobs = blobKeypoints.size();
-	size_t numberOfCurrentlyTrackedBlobs = m_currentlyTrackedBlobs.size();
+	const size_t numberOfNewBlobs = blobKeypoints.size();
+	const size_t numberOfCurrentlyTrackedBlobs = m_currentlyTrackedBlobs.size();
 
 	if (0 == numberOfNewBlobs)
 	{
@@ -40,7 +40,7 @@ void BlobManager::matchBlobs(std::vector<cv::KeyPoint> blobKeypoints, cv::Mat &p
 
 	if (0 == numberOfCurrentlyTrackedBlobs)
 	{
-		registerNewBlobs(blobKeypoints);
+		registerNewBlobs(blobKeypoints, currentFrameTime, currentFilename);
 		return;
 	}
 
@@ -102,6 +102,9 @@ void BlobManager::matchBlobs(std::vector<cv::KeyPoint> blobKeypoints, cv::Mat &p
 			{
 				if (std::find(assignedCols.begin(), assignedCols.end(), x) == assignedCols.end())
 				{
+					// Blob went out of frame, we have whole path of this blob so calculate angles of this blob
+					m_currentlyTrackedBlobs[x].calculateAngles();
+
 					// blob on x position has no pair therefore move him to m_blobs
 					m_blobs.push_back(m_currentlyTrackedBlobs[x]);
 					// erase blob from currently tracked blobs
@@ -121,7 +124,11 @@ void BlobManager::matchBlobs(std::vector<cv::KeyPoint> blobKeypoints, cv::Mat &p
 				// Which means that I know index of currently paired blobs
 				// Because I know that, I will remove new blob keypoint from given new blobKeypoints
 				// This will help me with adding all unpaired new blobs to currentlyTrackedBlobs.
-				m_currentlyTrackedBlobs[trackedBlobCurrentMatch].addNewLocation(blobKeypoints[newBlobCurrentMatch].pt);
+				if (newBlobCurrentMatch >= blobKeypoints.size())
+				{
+					continue;
+				}
+				m_currentlyTrackedBlobs[trackedBlobCurrentMatch].addNewLocation(blobKeypoints[newBlobCurrentMatch].pt, currentFrameTime);
 				assignedRows.push_back(newBlobCurrentMatch);
 				assignedCols.push_back(trackedBlobCurrentMatch);
 
@@ -134,7 +141,7 @@ void BlobManager::matchBlobs(std::vector<cv::KeyPoint> blobKeypoints, cv::Mat &p
 			{
 				// Because I know that no new blobs are paired, there are only unpaired new blobs left
 				// which means I will add 1 by 1 new blob to currently tracked blobs.
-				Blob newBlob(m_currentBlobId++, blobKeypoints[0].pt);
+				Blob newBlob(m_currentBlobId++, blobKeypoints[0].pt, currentFrameTime, currentFilename);
 				m_currentlyTrackedBlobs.push_back(newBlob);
 
 				numberOfCurrentlyAssignedNewBlobs++;
@@ -146,6 +153,15 @@ void BlobManager::matchBlobs(std::vector<cv::KeyPoint> blobKeypoints, cv::Mat &p
 	for (auto blob : m_currentlyTrackedBlobs)
 	{
 		cv::putText(paintMeLikeOneOfYourFrenchGirlsFrame, std::to_string(blob.getId()), blob.getLastPoint(), cv::FONT_HERSHEY_PLAIN, 2, cv::Scalar(0, 0, 255), 2);
+		std::cout << "Blob with ID: " << blob.getId() << ", in time: " << blob.getLastTime() << std::endl;
+	}
+}
+
+void BlobManager::drawBlobPaths(cv::Mat& img)
+{
+	for (auto blob : m_currentlyTrackedBlobs)
+	{
+		blob.drawPath(img);
 	}
 }
 
