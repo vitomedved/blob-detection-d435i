@@ -2,7 +2,7 @@
 
 #include <opencv2/opencv.hpp>
 
-#include "CBlob.h"
+#include "CBlob.hpp"
 
 class BlobManager
 {

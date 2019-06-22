@@ -1,31 +1,35 @@
 cmake_minimum_required(VERSION 3.1.0)
-project ("blob-detection")
+project (blob-detection)
 
-set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
-set(LIBRARY_OUTPUT_PATH ${PROJECT_BINARY_DIR}/lib)
 add_definitions(-std=c++17)
 
-include_directories(
-	$ENV{rs2_include}
-#	$ENV{opencv_include}
-	"E:/opencv/build/include"
-	"./include"
-	)
+find_package(OpenCV REQUIRED)
+find_package(realsense2 REQUIRED)
 
-set(SOURCES 
-	"./src/main.cpp"
-	"./src/BackgroundSubtraction.cpp")
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 
-message("$ENV{rs2_libx64} $ENV{rs2_libx86} $ENV{opencv_libx64}")
+#set(SOURCES 
+#	./src/main.cpp
+#	./src/BackgroundSubtraction.cpp
+#	./src/CBlob.cpp
+#	./src/CBlobManager.cpp)
+#
+#set(HEADERS 
+#	./include/BackgroundSubtraction.hpp
+#	./include/CBlob.hpp
+#	./include/CBlobManager.hpp
+#	./include/cv-helpers.hpp)
 
-link_directories(
-	"C:/Program Files (x86)/Intel RealSense SDK 2.0/lib/x64"
-	"E:/opencv/build/x64/vc15/lib"
-	)
+file(GLOB SOURCES
+    include/*.hpp
+    src/*.cpp
+)
 
-link_libraries("opencv_world410d.lib" "opencv_world410.lib" "realsense2.lib")
+INCLUDE_DIRECTORIES( ${PROJECT_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS} )
 
-add_executable(main "./src/main.cpp")
-add_executable(bgsub "./src/BackgroundSubtraction.cpp")
+#link_directories( ${CMAKE_BINARY_DIR}/bin)
 
-add_subdirectory(src)
+add_executable( blob-detection ${SOURCES} )
+
+target_link_libraries(blob-detection ${OpenCV_LIBS} ${realsense2_LIBRARY})

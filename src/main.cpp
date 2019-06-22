@@ -8,11 +8,11 @@
 #include "cv-helpers.hpp"
 
 #include "BackgroundSubtraction.hpp"
-#include "CBlobManager.h"
+#include "CBlobManager.hpp"
 
 
-const auto PLAYBACK_FILEPATH = "C:/Users/vmedved/Desktop/blob-detection/recording/test.bag";//"../../recording/test.bag";
-const auto RECORDING_FILEPATH = "C:/Users/vmedved/Desktop/blob-detection/recording/test2.bag";//"../../recording/test2.bag";
+const auto PLAYBACK_FILEPATH = "../recording/test.bag";
+const auto RECORDING_FILEPATH = "../recording/test2.bag";
 
 float CURRENT_SCALE = 3.0;
 

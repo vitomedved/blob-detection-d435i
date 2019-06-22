@@ -1,5 +1,5 @@
 
-#include "CBlob.h"
+#include "CBlob.hpp"
 
 
 Blob::Blob(int id, cv::Point2f currentPosition, uint64_t timestamp, std::string filepath)
