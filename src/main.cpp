@@ -8,11 +8,13 @@
 #include "cv-helpers.hpp"
 
 #include "BackgroundSubtraction.hpp"
-#include "CBlobManager.hpp"
+#include "CBlobManager.h"
+
+#include <atomic>
 
 
-const auto PLAYBACK_FILEPATH = "../recording/test.bag";
-const auto RECORDING_FILEPATH = "../recording/test2.bag";
+const auto PLAYBACK_FILEPATH = "C:/Users/vmedved/Desktop/blob-detection/recording/recording_1561980047707.bag";//"../../recording/test.bag";
+//const auto RECORDING_FILEPATH = "C:/Users/vmedved/Desktop/blob-detection/recording/test2.bag";//"../../recording/test2.bag";
 
 float CURRENT_SCALE = 3.0;
 
@@ -27,6 +29,16 @@ float get_depth_scale(rs2::device dev);
 std::vector<cv::KeyPoint> getKeypointsOfCurrentFrame(cv::Mat& frame, cv::Ptr<cv::SimpleBlobDetector>& blobDetector);
 
 int thr = 25;
+
+bool doesFrameContainHuman(rs2::frameset& frameset, cv::Ptr<cv::BackgroundSubtractor> &bgSub, cv::Ptr<cv::SimpleBlobDetector> &blobDetector);
+
+static double distanceBtwPoints(const cv::Point2f& a, const cv::Point2f& b)
+{
+	double xDiff = a.x - b.x;
+	double yDiff = a.y - b.y;
+
+	return std::sqrt((xDiff * xDiff) + (yDiff * yDiff));
+}
 
 /*
 * Class for enqueuing and dequeuing cv::Mats efficiently
@@ -51,18 +63,11 @@ public:
 	};
 };
 
-bool doesFrameContainHuman(rs2::frameset& frameset, cv::Ptr<cv::BackgroundSubtractor> &bgSub, cv::Ptr<cv::SimpleBlobDetector> &blobDetector);
-
-static double distanceBtwPoints(const cv::Point2f& a, const cv::Point2f& b)
-{
-	double xDiff = a.x - b.x;
-	double yDiff = a.y - b.y;
-
-	return std::sqrt((xDiff * xDiff) + (yDiff * yDiff));
-}
-
 int main(int argc, char* argv[]) try
 {
+
+	// TODO: check if frames are lossless, RGB recording in 60fps
+
 	// ----------------------- OPENCV ---------------------------------
 	// Declare opencv window where recording/playback will be shown
 	//cv::namedWindow(depthImageWindowName, cv::WINDOW_NORMAL);
@@ -84,8 +89,16 @@ int main(int argc, char* argv[]) try
 	// rs2::config which is used to choose between recording/playbacking or just a normal live stream
 	rs2::config cfg; // Declare a new configuration
 
-	//cfg.enable_record_to_file(RECORDING_FILEPATH);
-	cfg.enable_device_from_file(PLAYBACK_FILEPATH);
+
+	std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
+	std::string timestamp_string = std::to_string(ms.count());
+	
+	cfg.enable_stream(RS2_STREAM_COLOR, 640, 480, RS2_FORMAT_RGB8, 60);
+	cfg.enable_stream(RS2_STREAM_DEPTH, 640, 480, RS2_FORMAT_Z16, 90);
+	
+	//cfg.enable_record_to_file("C:/Users/vmedved/Desktop/blob-detection/recording/recording_" + timestamp_string + ".bag");
+	//cfg.enable_device_from_file(PLAYBACK_FILEPATH);
+
 	//cfg.enable_all_streams();
 
 	rs2::pipeline_profile profile = pipe->start(cfg);
@@ -114,8 +127,8 @@ int main(int argc, char* argv[]) try
 
 	cv::SimpleBlobDetector::Params params;
 	params.filterByArea = true;
-	params.minArea = 1000;
-	params.maxArea = 20000;
+	params.minArea = 2000;
+	params.maxArea = 80000;
 	params.filterByCircularity = false;
 	params.filterByColor = true;
 	params.blobColor = 255;
@@ -145,7 +158,9 @@ int main(int argc, char* argv[]) try
 
 	BlobManager blobManager;
 
-	while(true)
+	//cv::VideoWriter depthVideo("C:/Users/vmedved/Desktop/blob-detection/recording/video.avi", cv::VideoWriter::fourcc('L', 'A', 'G', 'S'), 30, cv::Size(640, 480), false);
+
+	//while(true)
 	{
 		// Currently, recording mode will record timeoutThrashold seconds to a .bag file
 		// TODO: while time not passed threshold(get frames -> check for blobs -> resume/pause recording)
@@ -157,17 +172,19 @@ int main(int argc, char* argv[]) try
 				pipe->stop();
 				pipe = std::make_shared<rs2::pipeline>();
 				std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
-				rs2::config newCfg;
-				std::string timestamp_string = std::to_string(ms.count());
-				newCfg.enable_record_to_file("C:/Users/vmedved/Desktop/blob-detection/recording/recording_" + timestamp_string + ".bag");
-				pipe->start(newCfg);
-				device = pipe->get_active_profile().get_device();
-				start = std::chrono::system_clock::now();
+				//rs2::config newCfg;
+				//std::string timestamp_string = std::to_string(ms.count());
+				//newCfg.enable_record_to_file("C:/Users/vmedved/Desktop/blob-detection/recording/recording_" + timestamp_string + ".bag");
+				//pipe->start(newCfg);
+				//device = pipe->get_active_profile().get_device();
+				//start = std::chrono::system_clock::now();
+				pipe.reset();
+				return 0;
 			}
 
 
 			frames = pipe->wait_for_frames();
-			if (!doesFrameContainHuman(frames, knn, blobDetectorForRecording))
+			if (/*!doesFrameContainHuman(frames, knn, blobDetectorForRecording)*/false)
 			{
 				/*pipe->stop();
 				pipe = std::make_shared<rs2::pipeline>();
@@ -179,7 +196,7 @@ int main(int argc, char* argv[]) try
 			}
 			else
 			{
-				device.as<rs2::recorder>().resume();
+				//device.as<rs2::recorder>().resume();
 			}
 
 			/*while (true)
@@ -216,6 +233,27 @@ int main(int argc, char* argv[]) try
 		}
 		else if (device.as<rs2::playback>())
 		{
+			int64 start = cv::getTickCount();
+
+			rs2::frameset data = pipe->wait_for_frames(); // Wait for next set of frames from the camera
+			rs2::frame depth = data.get_depth_frame().apply_filter(color_map);
+
+			// Query frame size (width and height)
+			const int w = depth.as<rs2::video_frame>().get_width();
+			const int h = depth.as<rs2::video_frame>().get_height();
+
+			// Create OpenCV matrix of size (w,h) from the colorized depth data
+			cv::Mat image(cv::Size(w, h), CV_8UC3, (void*)depth.get_data(), cv::Mat::AUTO_STEP);
+			// Update the window with new data
+			cv::imshow("depth 90fps", image);
+			cv::waitKey(1);
+
+			double fps = cv::getTickFrequency() / (cv::getTickCount() - start);
+			std::cout << "FPS : " << fps << ", ";
+
+			std::cout << std::endl;
+
+			/*
 			rs2::frameset frameset = pipe->wait_for_frames();
 
 			if (profile_changed(pipe->get_active_profile().get_streams(), profile.get_streams()))
@@ -329,6 +367,7 @@ int main(int argc, char* argv[]) try
 			rgbdData.release();
 			knnResult.release();
 			mog2Result.release();
+			*/
 		}
 		/*
 		else if (device.as<rs2::playback>())
@@ -555,11 +594,190 @@ int main(int argc, char* argv[]) try
 		*/
 		else
 		{
-			frames = pipe->wait_for_frames();
-			if (doesFrameContainHuman(frames, knn, blobDetectorForRecording))
+			std::mutex accessToQueueMutex;
+
+			std::queue<QueuedMat> colorQueue;
+			std::atomic<bool> isColorMatCreated = false;
+			std::atomic<bool> isBlobDetected = false;
+			cv::Mat colorDequeuedMat;
+			
+			std::thread processingThread([&]() 
 			{
-				device.as<rs2::recorder>().resume();
+					const int MAX_FRAMES_IN_Q = 3;
+
+					bool hadInvalidFrames = false;
+					int MAX_BLOB_OUT_OF_FRAME_SECONDS_RECORD = 5;
+
+					std::chrono::system_clock::time_point startTime;
+					std::chrono::system_clock::time_point endTime;
+
+					while (true)
+					{
+						if (!isColorMatCreated)
+						{
+							continue;
+						}
+
+						while (true)
+						{
+							accessToQueueMutex.lock();
+							if (!colorQueue.empty())
+							{
+								colorQueue.front().img.copyTo(colorDequeuedMat);
+								colorQueue.pop();
+							}
+							else
+							{
+								accessToQueueMutex.unlock();
+								break;
+							}
+							accessToQueueMutex.unlock();
+
+							std::vector<cv::KeyPoint> keypoints;
+
+							cv::resize(colorDequeuedMat, colorDequeuedMat, cv::Size(224, 168));
+
+							cv::GaussianBlur(colorDequeuedMat, colorDequeuedMat, cv::Size(5, 5), 0);
+							cv::dilate(colorDequeuedMat, colorDequeuedMat, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(20, 20)));
+
+							knn->apply(colorDequeuedMat, colorDequeuedMat);
+
+							cv::GaussianBlur(colorDequeuedMat, colorDequeuedMat, cv::Size(5, 5), 0);
+
+							blobDetectorForRecording->detect(colorDequeuedMat, keypoints);
+
+							cv::drawKeypoints(colorDequeuedMat, keypoints, colorDequeuedMat, cv::Scalar(255, 0, 255), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
+
+							if (keypoints.size() > 0)
+							{
+								hadInvalidFrames = false;
+								isBlobDetected = true;
+							}
+							else
+							{								
+								if (!hadInvalidFrames)
+								{
+									// last frame was detected blob so this is first frame for blob to be undetected
+									// start time and count 5 secs
+									hadInvalidFrames = true;
+									startTime = std::chrono::system_clock::now();
+								}
+								else
+								{
+									// blob was not detected in previous frame so check if time has passed threshold, if yes, stop recording
+									endTime = std::chrono::system_clock::now();
+									auto diff = std::chrono::duration_cast<std::chrono::seconds>(endTime - startTime);
+									if (diff.count() > MAX_BLOB_OUT_OF_FRAME_SECONDS_RECORD)
+									{
+										isBlobDetected = false;
+									}
+								}
+							}
+
+							cv::imshow("Processing thread", colorDequeuedMat);
+							cv::waitKey(1);
+
+							//accessToQueueMutex.lock();
+							while (colorQueue.size() > MAX_FRAMES_IN_Q)
+							{
+								colorQueue.pop();
+							}
+							//accessToQueueMutex.unlock();
+						}
+						std::this_thread::sleep_for(std::chrono::milliseconds(500));
+					}
+			});
+			processingThread.detach();
+			
+			bool isVideoStarted = false;
+
+			cv::VideoWriter colorVideo;
+			cv::VideoWriter depthVideo;
+
+			while (true)
+			{
+
+				rs2::frameset data = pipe->wait_for_frames(); // Wait for next set of frames from the camera
+				
+				rs2::video_frame colorFrame = data.get_color_frame();
+				rs2::depth_frame depthFrame = data.get_depth_frame();
+
+				auto color_w = colorFrame.get_width();
+				auto color_h = colorFrame.get_height();
+
+				cv::Mat colorData(cv::Size(color_w, color_h), CV_8UC3, (void*)colorFrame.get_data(), cv::Mat::AUTO_STEP);
+				cv::Mat depthData = frame_to_mat(depthFrame);
+				depthData.convertTo(depthData, CV_8UC1, 5120./65536.);
+				
+
+				if (!isColorMatCreated)
+				{
+					colorDequeuedMat = cv::Mat(color_h, color_w, CV_8UC3);
+					isColorMatCreated = true;
+				}
+
+				cv::imshow("Main thread - color", colorData);
+				cv::imshow("Main thread - depth", depthData);
+				cv::waitKey(1);
+			
+				QueuedMat colorMat;
+				colorData.copyTo(colorMat.img);
+
+				accessToQueueMutex.lock();
+				colorQueue.push(colorMat);
+				accessToQueueMutex.unlock();
+
+
+				if (isBlobDetected)
+				{	
+					if (!isVideoStarted)
+					{
+						std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
+						std::string timestamp_string = std::to_string(ms.count());
+
+						cv::String colorFilename = "C:/Users/vmedved/Desktop/blob-detection/recording/color_";
+						colorFilename.append(timestamp_string);
+						colorFilename.append(".mp4");
+
+						colorVideo = cv::VideoWriter(colorFilename, cv::VideoWriter::fourcc('l', 'a', 'g', 's'), 60, cv::Size(640, 480), false);
+						
+						cv::String depthFilename = "C:/Users/vmedved/Desktop/blob-detection/recording/depth_";
+						depthFilename.append(timestamp_string);
+						depthFilename.append(".mp4");
+
+						depthVideo = cv::VideoWriter(depthFilename, cv::VideoWriter::fourcc('l', 'a', 'g', 's'), 90, cv::Size(640, 480), false);
+						
+						isVideoStarted = true;
+
+						std::cout << "Started recording." << std::endl;
+					}
+
+					colorVideo.write(colorData);
+					depthVideo.write(depthData);
+				}
+				else
+				{
+					if (isVideoStarted)
+					{
+						colorVideo.release();
+						depthVideo.release();
+						isVideoStarted = false;
+						std::cout << "Stopped recording." << std::endl;
+					}
+				}
+
+				depthData.release();
+				colorData.release();
+
+				//frames = pipe->wait_for_frames();
+
+				/*if (doesFrameContainHuman(frames, knn, blobDetectorForRecording))
+				{
+					//device.as<rs2::recorder>().resume();
+				}*/
 			}
+
+
 		}
 	}
 
@@ -645,7 +863,7 @@ bool profile_changed(const std::vector<rs2::stream_profile>& current, const std:
 
 bool doesFrameContainHuman(rs2::frameset& frameset, cv::Ptr<cv::BackgroundSubtractor> &bgSub, cv::Ptr<cv::SimpleBlobDetector> &blobDetector)
 {
-	const int RESIZE_SCALE_FACTOR = 4;
+	const int RESIZE_SCALE_FACTOR = 2;
 
 	std::vector<cv::KeyPoint> keypoints;
 

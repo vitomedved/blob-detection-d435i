@@ -50,7 +50,7 @@ cv::Mat depth_frame_to_meters(const rs2::pipeline& pipe, const rs2::depth_frame&
 	using namespace rs2;
 
 	Mat dm = frame_to_mat(f);
-	//dm.convertTo(dm, CV_64F);
+	dm.convertTo(dm, CV_64F);
 	auto depth_scale = pipe.get_active_profile()
 		.get_device()
 		.first<depth_sensor>()

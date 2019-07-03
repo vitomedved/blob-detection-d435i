@@ -1,5 +1,5 @@
 
-#include "CBlobManager.hpp"
+#include "CBlobManager.h"
 
 BlobManager::BlobManager():
 	m_areAllBlobsAssigned(true),
