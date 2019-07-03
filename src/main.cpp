@@ -8,7 +8,7 @@
 #include "cv-helpers.hpp"
 
 #include "BackgroundSubtraction.hpp"
-#include "CBlobManager.h"
+#include "CBlobManager.hpp"
 
 #include <atomic>
 
