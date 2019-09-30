@@ -1,9 +1,10 @@
 // License: Apache 2.0. See LICENSE file in root directory.
 // Copyright(c) 2017 Intel Corporation. All Rights Reserved.
 
-#pragma once
+#ifndef CV_HELPERS_HPP
+#define CV_HELPERS_HPP
 
-#include <librealsense2/rs.hpp> // Include RealSense Cross Platform API
+#include <rs.hpp> // Include RealSense Cross Platform API
 #include <opencv2/opencv.hpp>   // Include OpenCV API
 #include <exception>
 
@@ -82,3 +83,5 @@ std::string type2str(int type) {
 	return r;
 }
 
+
+#endif //CV_HELPERS_HPP

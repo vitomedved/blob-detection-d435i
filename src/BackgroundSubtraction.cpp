@@ -16,7 +16,7 @@ BackgroundSubtraction::BackgroundSubtraction(BackgroundSubtraction::SubtractorTy
 	switch (type)
 	{
 	case DEPTH_THRESHOLD:
-		m_bgSubtractor = nullptr;
+		//m_bgSubtractor = nullptr;
 		m_backgroundSet = false;
 		m_threshold = 3;
 		break;
@@ -36,7 +36,7 @@ BackgroundSubtraction::BackgroundSubtraction(BackgroundSubtraction::SubtractorTy
 	switch (type)
 	{
 	case DEPTH_THRESHOLD:
-		m_bgSubtractor = nullptr;
+		//m_bgSubtractor = nullptr;
 		m_backgroundSet = false;
 		m_threshold = 3;
 		break;

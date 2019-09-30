@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.1.0)
 project (blob-detection)
 
-add_definitions(-std=c++17)
+add_definitions(-std=c++11)
 
 find_package(OpenCV REQUIRED)
 find_package(realsense2 REQUIRED)
@@ -9,27 +9,26 @@ find_package(realsense2 REQUIRED)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 
-#set(SOURCES 
-#	./src/main.cpp
-#	./src/BackgroundSubtraction.cpp
-#	./src/CBlob.cpp
-#	./src/CBlobManager.cpp)
-#
-#set(HEADERS 
-#	./include/BackgroundSubtraction.hpp
-#	./include/CBlob.hpp
-#	./include/CBlobManager.hpp
-#	./include/cv-helpers.hpp)
+set (LOCAL_INCLUDE_DIR ${PROJECT_SOURCE_DIR}/include)
+set(REALSENSE_INCLUDE_DIR /usr/include/librealsense2)
+set(OPENCV_INCLUDE_DIR /usr/local/include/opencv4)
 
-file(GLOB SOURCES
-    include/*.hpp
-    src/*.cpp
+set (INCLUDES
+        ${OpenCV_INCLUDE_DIRS}
+        ${REALSENSE_INCLUDE_DIR}
+        ${LOCAL_INCLUDE_DIR}
 )
 
-INCLUDE_DIRECTORIES( ${PROJECT_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS} )
+include_directories( ${INCLUDES} )
 
-#link_directories( ${CMAKE_BINARY_DIR}/bin)
+set(SOURCES
+        src/main.cpp
+        src/CBlobManager.cpp
+        src/CBlob.cpp
+        src/BackgroundSubtraction.cpp)
 
 add_executable( blob-detection ${SOURCES} )
 
-target_link_libraries(blob-detection ${OpenCV_LIBS} ${realsense2_LIBRARY})
+target_link_libraries(blob-detection
+        -lrealsense2 ${OpenCV_LIBS} -pthread
+)

@@ -1,8 +1,10 @@
-#pragma once
+
+#ifndef C_BLOB_MANAGER_HPP
+#define C_BLOB_MANAGER_HPP
 
 #include <opencv2/opencv.hpp>
 
-#include "CBlob.h"
+#include "CBlob.hpp"
 
 class BlobManager
 {
@@ -28,3 +30,4 @@ private:
 
 };
 
+#endif // C_BLOB_MANAGER_HPP

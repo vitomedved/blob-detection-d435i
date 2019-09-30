@@ -1,4 +1,6 @@
-#pragma once
+
+#ifndef BACKGROUND_SUBTRACTION_HPP
+#define BACKGROUND_SUBTRACTION_HPP
 
 #include <opencv2/opencv.hpp>
 
@@ -36,3 +38,5 @@ private:
 	cv::Ptr<cv::BackgroundSubtractor> m_bgSubtractor;
 	cv::Mat m_background;
 };
+
+#endif // BACKGROUND_SUBTRACTION_HPP

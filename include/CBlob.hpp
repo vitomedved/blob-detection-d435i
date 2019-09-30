@@ -1,4 +1,5 @@
-#pragma once
+#ifndef C_BLOB_HPP
+#define C_BLOB_HPP
 
 #include <opencv2/opencv.hpp>
 
@@ -31,3 +32,4 @@ private:
 	std::vector<double> m_orientation;
 };
 
+#endif // C_BLOB_HPP
