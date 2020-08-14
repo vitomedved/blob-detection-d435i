@@ -22,6 +22,8 @@ public:
 
 	void setDepthThreshold(int threshold);
 
+	void setDepthBackgroundRefreshThreshold(long threshold);
+
 	BackgroundSubtraction(BackgroundSubtraction::SubtractorType type);
 
 	BackgroundSubtraction(BackgroundSubtraction::SubtractorType type, int history, int varThreshold, bool shadows);
@@ -30,8 +32,13 @@ public:
 
 private:
 	bool m_backgroundSet;
+	bool m_shouldSetTimeForBackgroundRefresh;
 
 	int m_threshold;
+
+	long m_timeCheckpoint;
+	long m_backgroundRefreshTimeTreshold;
+
 
 	SubtractorType m_type;
 

@@ -9,6 +9,15 @@ void BackgroundSubtraction::setDepthThreshold(int threshold)
 	m_threshold = threshold;
 }
 
+void BackgroundSubtraction::setDepthBackgroundRefreshThreshold(long threshold)
+{
+	if (DEPTH_THRESHOLD != m_type)
+	{
+		return;
+	}
+	m_backgroundRefreshTimeTreshold = threshold;
+}
+
 BackgroundSubtraction::BackgroundSubtraction(BackgroundSubtraction::SubtractorType type)
 {
 	m_type = type;
@@ -19,6 +28,9 @@ BackgroundSubtraction::BackgroundSubtraction(BackgroundSubtraction::SubtractorTy
 		//m_bgSubtractor = nullptr;
 		m_backgroundSet = false;
 		m_threshold = 3;
+		m_shouldSetTimeForBackgroundRefresh = true;
+		// IDK if I can leave variables uninitialized therefore I initialized it. It will be initialized before usage so if compilation works wihthout initialization, this can be removed.
+		m_timeCheckpoint = 0;
 		break;
 	case MOG2:
 		m_bgSubtractor = cv::createBackgroundSubtractorMOG2(500, 16.0, false);
@@ -39,6 +51,9 @@ BackgroundSubtraction::BackgroundSubtraction(BackgroundSubtraction::SubtractorTy
 		//m_bgSubtractor = nullptr;
 		m_backgroundSet = false;
 		m_threshold = 3;
+		m_shouldSetTimeForBackgroundRefresh = true;
+		// IDK if I can leave variables uninitialized therefore I initialized it. It will be initialized before usage so if compilation works wihthout initialization, this can be removed.
+		m_timeCheckpoint = 0;
 		break;
 	case MOG2:
 		m_bgSubtractor = cv::createBackgroundSubtractorMOG2(history, varThreshold, shadows);
@@ -82,6 +97,29 @@ void BackgroundSubtraction::subtract(cv::Mat& src, cv::Mat& dst)
 
 	if (m_backgroundSet)
 	{
+		// TODO: 
+		//  1. Define boolean shouldSetTimeForBackgroundRefresh inside BackgroundSubtraction.hpp and set it to true. Define backgroundRefreshTimeTreshold variable and set it to 
+		//     time after which background should refresh, e.g. 100 (s? ms?, depends on timer you use and implementation of getCurrentTime()). 
+		//  2. Check here if shouldSetTimeForBackgroundRefresh is true, then take current time and save it to timeCheckpoint variable. Set shouldSetTimeForBackgroundRefresh to false.
+		//  3. Else if shouldSetTimeForBackgroundRefresh is false, check if ((currentTime - timeCheckpoint) > backgroundRefreshTimeTreshold) then set this frame as background and
+		//     set shouldSetTimeForBackgroundRefresh to false.
+
+		if(true == m_shouldSetTimeForBackgroundRefresh)
+		{
+			// TODO: implement getCurrentTime();
+			m_timeCheckpoint = getCurrentTime();
+			m_shouldSetTimeForBackgroundRefresh = false;
+		}
+		else
+		{
+			// TODO: work for later: smarter way would be to use timer and schedule to tick after some time and refresh background.
+			if((getCurrentTime() - m_timeCheckpoint) > m_backgroundRefreshTimeTreshold)
+			{
+				// Refresh background
+				src.copyTo(m_background);
+			}
+		}
+
 		int rows = src.rows;
 		int cols = src.cols;
 
@@ -117,4 +155,10 @@ void BackgroundSubtraction::subtract(cv::Mat& src, cv::Mat& dst)
 
 		m_backgroundSet = true;
 	}
+}
+
+float getCurrentTime()
+{
+	// TODO implement
+	return 0;
 }
