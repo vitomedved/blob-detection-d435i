@@ -159,6 +159,7 @@ void BackgroundSubtraction::subtract(cv::Mat& src, cv::Mat& dst)
 
 float getCurrentTime()
 {
-	// TODO implement
-	return 0;
+    auto now = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<float> fs = now;
+	return now.count();
 }
